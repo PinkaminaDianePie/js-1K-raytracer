@@ -1,0 +1,203 @@
+function Vector(x, y = x, z = x){
+  return {x, y, z};
+}
+
+function sum(first, second) {
+  return Vector(first.x + second.x, first.y + second.y, first.z + second.z);
+}
+
+function scale(vector, factor) {
+  return Vector(vector.x * factor, vector.y * factor, vector.z * factor);
+}
+
+function dotProduct(first, second = first) {
+  return first.x * second.x + first.y * second.y + first.z * second.z;
+}
+
+function crossProduct(first, second) {
+  return Vector(first.y * second.z - first.z * second.y, first.z * second.x - first.x * second.z, first.x * second.y - first.y * second.x);
+}
+
+function normalize(v) {
+  return scale(v, 1 / Math.sqrt(dotProduct(v)));
+}
+
+function subtract(first, second){
+  return sum(first, scale(second, -1));
+}
+
+const spheresData = [
+  [Vector(10, 2, 2),      Vector(4, 0, 4), 1.5], //[position, color, radius]
+  [Vector(-3, 0, 2),      Vector(8, 5, 7), 1.5],
+  [Vector(3, 0, 2),       Vector(0, 0, 4), 1.5],
+  [Vector(1.5, 0, 4.5),   Vector(8, 8, 6), 1.5],
+  [Vector(-1, 10, 4),     Vector(0, 4, 4), 4.0],	
+  [Vector(0, 0, 7),       Vector(8, 5, 4), 1.5]
+];
+
+const INTERSECTION_NONE   = 0;
+const INTERSECTION_SPHERE = 1;
+const INTERSECTION_FLOOR  = 2;
+
+/**
+ * this function will check if ray intersects with something and return intersection parameters, such as position or normal
+ */
+function trace(rayStart, rayDirection){
+  let rayEnd, lightDirection, normal, sphereColor;
+  let intersection = INTERSECTION_NONE;
+  let distanceToFloor = -rayStart.z / rayDirection.z;
+  let distanceToNearestSphere = Number.MAX_SAFE_INTEGER;
+  let lightPosition = Vector(Math.random() * 27, -81 + Math.random() * 27, 81); //we need to generate randomized light source for soft shadows
+
+  if (distanceToFloor > 0 && rayStart.z > 0){ //rayStart.z can be negative sometime
+    intersection = INTERSECTION_FLOOR;
+    rayEnd = sum(rayStart, scale(rayDirection, distanceToFloor));
+    lightDirection = normalize(subtract(lightPosition, rayEnd));
+    normal = Vector(0, 0, 1);
+  }
+  for(let [position, color, radius] of spheresData){
+    /*
+      ray-sphere intersection:
+      (rayEnd-position).(rayEnd-position) - radius^2 = 0 //rayEnd is a possible point on sphere, position is center of sphere
+      (rayStart+rayDirection*distanceToSphere-position).(rayStart+rayDirection*distanceToSphere-position) - radius^2 = 0
+      (rayDirection.rayDirection)*distanceToSphere^2 + 2*rayDirection.(rayStart-position)*distanceToSphere + (rayStart-position).(rayStart-position) - radius^2 = 0
+      a = rayDirection.rayDirection
+      b = 2*rayDirection.(rayStart-position)
+      c = (rayStart-position).(rayStart-position) - radius^2
+      x = distanceToSphere;
+      a*x^2 + b*x + c = 0
+      roots of this quadratic equation will give us distance to intersection point on sphere
+    */
+    let distanceToSphereCenter = subtract(rayStart, position);
+    let a = 1; //dotProduct(rayDirection, rayDirection); as direction normalized result always will be equal to 1
+    let b = 2 * dotProduct(rayDirection, distanceToSphereCenter);
+    let c = dotProduct(distanceToSphereCenter) - radius*radius;
+    let d = b * b - 4 * a * c;
+    let distanceToSphere = (-b - Math.sqrt(d)) / 2 * a; //we get only root with -b, because it gives us nearest from two intersection points
+    if (distanceToSphere < distanceToNearestSphere && distanceToSphere > 0){ //nearest, but not behind the ray
+      distanceToNearestSphere = distanceToSphere;
+      intersection = INTERSECTION_SPHERE;
+      sphereColor = color;
+      rayEnd = sum(rayStart, scale(rayDirection, distanceToSphere));
+      lightDirection = normalize(subtract(lightPosition, rayEnd));
+      normal = normalize(subtract(rayEnd, position));
+    }
+  }
+  return {intersection, rayEnd, lightDirection, normal, sphereColor};
+}
+
+/**
+ * this function draw texture with `Sierpinski carpet` fractal
+ */
+function getFloorColor(x, y){
+  const CENTER_TILE_COLOR = Vector(8, 0, 8);
+  const OTHERS_TILE_COLOR = Vector(8, 5, 8);
+  if (x + y !== 0){
+    if (x % 3 === 1 && y % 3 === 1){
+      return CENTER_TILE_COLOR;
+    } else {
+      return getFloorColor(x / 3 | 0, y / 3 | 0); //cast float to int, need for performance
+    }
+  } else {
+    return OTHERS_TILE_COLOR;
+  }
+}
+    
+/**
+ * this function will calculate pixel color for one ray, can be called recurcievely to generate reflections
+ */
+function sample(rayStart, rayDirection, renderStars = false){ //stars are rendered only at sky, not at reflections
+  const COLOR_SKY          = Vector(5, 6, 8);
+  const COLOR_LIGHT_SOURCE = Vector(8, 8, 8);
+  const COLOR_STARS        = Vector(8, 8, 8);
+  let {intersection, rayEnd, lightDirection, normal, sphereColor} = trace(rayStart, rayDirection);
+  let reflectionRayDirection;
+  let color;
+  switch (intersection){
+    case INTERSECTION_NONE: 
+      return renderStars && Math.random() > 0.9
+        ? COLOR_STARS //draw star
+        : scale(COLOR_SKY, Math.pow(1 - rayDirection.z, 4)); //draw sky with gradient
+      break;
+    case INTERSECTION_SPHERE:
+      let diffuse = scale(sphereColor, 0.7 * dotProduct(normal, lightDirection));
+      let specular = scale(COLOR_LIGHT_SOURCE, Math.pow(dotProduct(normal, normalize(subtract(lightDirection, rayDirection))), 64));
+      reflectionRayDirection = sum(rayDirection, scale(normal, -2 * dotProduct(normal, rayDirection)));
+      let reflection = scale(sample(rayEnd, reflectionRayDirection), 0.4);
+      color = sum(diffuse, sum(specular, reflection));
+      break;
+    case INTERSECTION_FLOOR:
+      reflectionRayDirection = sum(rayDirection, scale(normal, -2 * dotProduct(normal, rayDirection)));
+      /*
+      	Here we draw floor texture. At first we add some big number (81 here) to let our fractal render at negative coordinates. Then we scale it, because we need more details and after all we get modulo for tiling. Also, result is casted from float to int, because it highly impact performance.
+      */
+      let floorColor = getFloorColor((rayEnd.x + 81) * 27 % 81 | 0, (rayEnd.y + 81) * 27 % 81 | 0);
+      let uVector = crossProduct(rayDirection, reflectionRayDirection);
+      let vVector = crossProduct(uVector, reflectionRayDirection);
+      /*
+        we need to randomize ray along our new direction to create glossy reflection on the floor
+      */
+      let randomizedDirection = sum(reflectionRayDirection, sum(scale(uVector, (Math.random() - 0.5) / 3), scale(vVector, (Math.random() - 0.5) / 3)));
+      color = sum(floorColor, sample(rayEnd, randomizedDirection));
+      color = scale(color, 0.5); //scale by 0.5 because we sum full color from texture and full color from reflection
+      break;
+  }
+  let isShadowed = trace(rayEnd, lightDirection).intersection; //check if there is a sphere between result point and light source
+  color = scale(color, isShadowed ? 0.5 : 1); //render shadows
+  return color;
+}
+    
+function main() {
+  const UP_DIRECTION         = Vector(0, 0, 1);
+  const CANVAS_WIDTH         = 512;
+  const CANVAS_HEIGHT        = 512;
+  const RAYS_PER_PIXEL       = 32;
+  const DISTANCE_TO_VIEWPORT = 10;
+  const VIEWPORT_WIDTH       = 12;
+  const VIEWPORT_HEIGHT      = 12;
+  const ALPHA_CHANNEL_COLOR  = 255;
+
+  let camera = Vector(-7, -10, 8);
+  let target = Vector(0, 0, 4);
+  let normalToViewport = normalize(subtract(camera, target));
+  let uVector = normalize(crossProduct(UP_DIRECTION, normalToViewport));
+  let vVector = crossProduct(uVector, normalToViewport); //we will use `left` vector instead of right, because screen Y coordinate rise from top to bottom and it will be easier to render with `left` vector
+  let viewportCenter = sum(camera, scale(normalToViewport, -DISTANCE_TO_VIEWPORT));
+  let leftDown = sum(viewportCenter, sum(scale(uVector, -VIEWPORT_WIDTH / 2), scale(vVector, -VIEWPORT_HEIGHT / 2)));
+  
+  let line = 0;
+  let imageData = c.createImageData(512,1);
+
+  function renderRow(){
+    let pixel = 0;
+    for (let i = CANVAS_WIDTH; i--;){
+      /*
+        we will accumulate color in `colorSum` variable, each ray adds color in [0..8] range, so after 32 steps we will get our final color
+      */
+      let colorSum = Vector(0, 0, 0);
+      for (let j = 0; j < RAYS_PER_PIXEL; j++){
+        /*
+          we need to randomize ray start position to create `depth of field` effect
+        */
+        let rayStart = sum(camera, sum(scale(uVector, (Math.random() - 0.5) / 3), scale(vVector, (Math.random() - 0.5) / 3)));
+        let viewportPixel = sum(leftDown, sum(scale(uVector, i * VIEWPORT_WIDTH / CANVAS_WIDTH), scale(vVector, line * VIEWPORT_HEIGHT / CANVAS_HEIGHT)));
+        let direction = normalize(subtract(viewportPixel, rayStart));
+        let color = sample(rayStart, direction, true);
+        colorSum = sum(colorSum, color);
+      }
+      for (let color in colorSum) {
+        imageData.data[pixel++] = colorSum[color];
+      }
+      imageData.data[pixel++] = ALPHA_CHANNEL_COLOR;
+    }      
+        
+    c.putImageData(imageData, 0, line);
+    if (line < CANVAS_HEIGHT) {
+      line++;
+      setTimeout(renderRow); //setTimeout needs for rendering line-by-line
+    }
+  }
+  renderRow();
+}
+
+main();
