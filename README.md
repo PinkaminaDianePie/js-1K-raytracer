@@ -20,4 +20,7 @@ It works with shim from js1k, incudes presetted canvas, so my raytracer for cont
 
 At this moment (January 2017) it works much faster in firefox, than on chrome.
 
+### Packer tool
+For this contest I've used [RegPack](https://github.com/Siorki/RegPack) (It also available [online](http://siorki.github.io/regPack.html)), it's the best choice for js1k since it's self-extractzble and easy to use, but because of it's limitations RegPack is unacceptable for large files.
+
 [You can see online preview here](http://js1k.com/2017-magic/demo/2648)
